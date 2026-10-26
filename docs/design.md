@@ -1,8 +1,9 @@
 # Design: SAT certificates on witness
 
-Status: both checks, the planner and the demo built and measured in witness-sim. The Erdős
+Status: both checks, the planner and the demo built and measured; the demo passes in witness-sim
+and on a local PolkaJam v0.1.29 testnet with the full spec's refine gas (493 s). The Erdős
 discrepancy proof is regenerated, attested end to end through witness in witness-sim, and its
-bounty paid; a testnet run is next. See [The Erdős discrepancy
+bounty paid; a slice of it on a testnet is next. See [The Erdős discrepancy
 proof](#the-erdős-discrepancy-proof).
 
 ## Summary
@@ -160,8 +161,9 @@ LEB128 reader rewrite alone changed nothing.
 
 **The model** (`tools/sat-report/src/plan.rs`), fitted by nonnegative least squares
 (`tools/fit_gas.py`) to 703 chunks measured in witness-sim (`scripts/gas.sh`): pigeonhole (8 and
-10 pigeons) and random 3-SAT proofs at budgets from 2×10⁷ to 2×10⁹, and the Erdős proof's 159
-chunks at 3×10⁹:
+10 pigeons) and random 3-SAT proofs at budgets from 2×10⁷ to 2×10⁹
+([data/small-proofs-gas.tsv](data/small-proofs-gas.tsv)), and the Erdős proof's 159 chunks at
+3×10⁹:
 
 | Per | Gas |
 |---|---|
@@ -214,7 +216,7 @@ Per chunk: [data/edp2-1161-gas.tsv](data/edp2-1161-gas.tsv) (the plan's counts, 
 | attestations cited a chunk | median 82, at most 160 |
 | subjects a chunk | median 22, at most 105 |
 
-**End to end in witness-sim** (`scripts/erdos-sim.sh`): carol attests the formula's anchor and
+**End to end in witness-sim** (`scripts/erdos.sh`): carol attests the formula's anchor and
 posts a bounty citing it, dave commits, attests every chunk through witness's service with
 `attest-batches.py`, reveals trusting the attested empty clause, and is paid.
 
