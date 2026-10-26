@@ -18,8 +18,11 @@
 #      bob found.
 #   3  UNSAT: a refutation of UNSAT_CNF (default: 7 pigeons in 6 holes). Its LRAT proof (UNSAT_LRAT)
 #      is cut into chunks (sat-report plan), and the bounty cites the formula's anchor
-#      attestation, so its reveals may trust attested clauses. dave commits first, then attests
-#      the chunks (witness's attest-batches.py), and reveals trusting the attested empty clause.
+#      attestation, so its reveals may trust attested clauses. It binds claims (--bind-claim):
+#      a reveal's witness names the attestation it adds. dave computes his chunks' attestation
+#      ids from his plan, commits to the last one's, then attests the chunks (witness's
+#      attest-batches.py), and reveals trusting the attested empty clause. mallory, who
+#      committed early to a witness of her own, can't claim it with dave's attestation.
 #
 # Every bounty's claim window passes and the hunters are paid; bounty 1 stays open.
 set -euo pipefail
@@ -199,7 +202,7 @@ item "$($W attest --service "$SVC" --attester carol --nonce $N --check "$SAT" --
 expect "the anchor is attested" '^0x' storage --attestation "$U/batch-0.claim"
 take carol
 item "$($W create --service "$SVC" --maker carol --nonce $N --check "$SAT" --params "$UNSAT_PARAMS" \
-	--blobs "$U/batch-0.claim:0" --reward 5000 --check-gas $CHUNK_CHECK_GAS --expiry $EXPIRY)"
+	--blobs "$U/batch-0.claim:0" --reward 5000 --check-gas $CHUNK_CHECK_GAS --expiry $EXPIRY --bind-claim)"
 expect "bounty 3 open" 'status: Open' bounty 3
 expect "carol escrowed the rewards" "^$((100000 - 1000 - 50000 - 2000 - 5000 - 10))\$" balance carol
 
@@ -212,10 +215,24 @@ commit() { # HUNTER BOUNTY SALT WITNESS-ARGS...
 commit alice 0 0x0a --witness-file "$TMP/r55.graph"
 commit mallory 0 0x0e --witness-file "$TMP/r55-flipped.graph"
 commit bob 2 0x0b --witness-file "$TMP/planted.assignment"
-# dave commits before attesting a single chunk: attested chunks are public, and the earliest
-# commitment wins.
-commit dave 3 0x0d --witness-str dave
-for who in alice bob dave mallory; do expect "$who committed, deposit taken" '^90$' balance $who; done
+# mallory commits to bounty 3 before anyone has proven anything, hoping to reveal trusting
+# whoever's empty clause gets attested.
+commit mallory 3 0x0e --witness-str mallory
+# dave's attestations' ids follow from his plan, so he computes them before attesting any (`witness
+# attest` only builds the op), and commits to the id of the one holding the empty clause. An
+# attested chunk is public, and nobody could know that id before committing.
+(cd "$U" && for b in $(seq 1 $(($(ls | grep -c '\.witness$') - 1))); do
+	trust=$(cat "batch-$b.trust")
+	$W attest --service "$SVC" --attester dave --nonce 0 --check "$SAT" --params "$UNSAT_PARAMS" \
+		--subjects "$(cat "batch-$b.subjects")" ${trust:+--trust "$trust"} --witness-file "batch-$b.witness" \
+		--check-gas "$CHUNK_CHECK_GAS" --claim-out "batch-$b.claim" --extrinsics "$TMP/dry" >/dev/null 2>&1
+	rm -rf "$TMP/dry"
+done)
+EMPTY=$(cat "$U/empty")
+DAVE_W=$($W claim-id --claim "$U/${EMPTY%:*}")
+commit dave 3 0x0d --witness "$DAVE_W"
+for who in alice bob dave; do expect "$who committed, deposit taken" '^90$' balance $who; done
+expect "mallory committed twice" '^80$' balance mallory
 
 step "dave attests his refutation: $(($(ls "$U" | grep -c '\.witness$') - 1)) chunks"
 # attest-batches.py signs with the attesters' nonces from the chain; dave's next is 1.
@@ -240,8 +257,13 @@ expect "alice's graph shows R(5,5) > 42" 'Revealing' bounty 0
 reveal 2 "$SAT" 0x00 bob 0x0b --blobs "$TMP/planted.formula" --witness-file "$TMP/planted.assignment"
 expect "bob's assignment satisfies the formula" 'Revealing' bounty 2
 REVEAL_GAS=$CHUNK_CHECK_GAS reveal 3 "$SAT" "$UNSAT_PARAMS" dave 0x0d --blobs "$U/batch-0.claim:0" \
-	--trust "$U/$(cat "$U/empty")" --witness-str dave
+	--trust "$U/$EMPTY" --witness "$DAVE_W"
 expect "dave's attested empty clause refutes the formula" 'Revealing' bounty 3
+REVEAL_GAS=$CHUNK_CHECK_GAS reveal 3 "$SAT" "$UNSAT_PARAMS" mallory 0x0e --blobs "$U/batch-0.claim:0" \
+	--trust "$U/$EMPTY" --witness-str mallory
+# Refused in accumulate: had it counted, her commitment, the earlier, would win (see the payouts).
+sleep $((POLL * 9))
+why
 
 step "waiting out the claim windows, then finalizing"
 for b in 0 2 3; do
@@ -254,7 +276,7 @@ expect "bob is paid" "^$((100 + 2000))\$" balance bob
 # Less an attest deposit for each chunk: attestations are kept for good, so it isn't refunded.
 CHUNKS=$(($(ls "$U" | grep -c '\.witness$') - 1))
 expect "dave is paid, less $CHUNKS attest deposits" "^$((100 + 5000 - 10 * CHUNKS))\$" balance dave
-expect "mallory lost the commit deposit" '^90$' balance mallory
+expect "mallory lost both commit deposits" '^80$' balance mallory
 expect "bounty 1, R(5,5) > 43, is still open" 'status: Open' bounty 1
 
 printf '\nthe witness-sat demo passed\n'

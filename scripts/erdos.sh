@@ -11,8 +11,9 @@
 # WORK/sim; a testnet's service id in WORK/service) and the stages' wall times (WORK/times), so
 # a run stopped part way resumes: attest-batches.py picks up from what's attested.
 #
-# carol attests the formula's anchor and posts the bounty citing it; dave commits, attests the
-# chunks (attest-batches.py, a round at a time, as many chunks a round as the DAG allows and a
+# carol attests the formula's anchor and posts the bounty citing it, binding claims (witness's
+# `create --bind-claim`); dave computes his chunks' attestation ids from the plan, commits to the
+# id of the one holding the empty clause, attests the chunks (attest-batches.py, a round at a time, as many chunks a round as the DAG allows and a
 # package fits), reveals trusting the attested empty clause, and is paid after the claim window.
 # With SLICE=K he attests only the first K chunks, and the bounty stays open.
 #
@@ -113,6 +114,19 @@ signed() { # WHO N PAYLOAD
 	fail "$who's op $n never applied"
 }
 
+# Build every chunk's claim, in order (each cites earlier ones), without submitting anything.
+dry_claims() {
+	(cd "$U" && for b in $(seq 1 "$CHUNKS"); do
+		local trust; trust=$(cat "batch-$b.trust")
+		$W attest --service "$SVC" --attester dave --nonce 0 --check "$SAT" --params "$PARAMS" \
+			--subjects "$(cat "batch-$b.subjects")" ${trust:+--trust "$trust"} --witness-file "batch-$b.witness" \
+			--check-gas $GAS --claim-out "batch-$b.claim" --extrinsics "$WORK/dry" >/dev/null 2>&1
+		rm -rf "$WORK/dry"
+	done)
+}
+# dave's witness: the id of his attestation holding the empty clause.
+dave_witness() { local e; e=$(cat "$U/empty"); $W claim-id --claim "$U/${e%:*}"; }
+
 step "building"
 (cd "$WITNESS_DIR" && cargo build -q --release -p witness-cli -p witness-sim &&
 	cargo jam-build --out-dir out -p witness-service >/dev/null)
@@ -195,11 +209,14 @@ if [ "$(bounty)" = none ]; then
 	expect "the anchor is attested" '^0x' storage --attestation "$U/batch-0.claim"
 	n=$(nonce carol)
 	signed carol "$n" "$($W create --service "$SVC" --maker carol --nonce "$n" --check "$SAT" --params "$PARAMS" \
-		--blobs "$U/batch-0.claim:0" --reward 100000 --check-gas $GAS --expiry $(( $(slot) + 100000 )))"
+		--blobs "$U/batch-0.claim:0" --reward 100000 --check-gas $GAS --expiry $(( $(slot) + 100000 )) --bind-claim)"
 	expect "the bounty is open" 'status: Open' bounty
-	# dave commits before attesting a chunk: attested chunks are public.
+	# dave commits before attesting a chunk, as attested chunks are public, to the id of his
+	# attestation holding the empty clause: `witness attest` only builds an op, so he builds them
+	# all and reads it off.
+	dry_claims
 	n=$(nonce dave)
-	signed dave "$n" "$($W commit --service "$SVC" --bounty 0 --hunter dave --nonce "$n" --salt 0x0d --witness-str dave 2>/dev/null)"
+	signed dave "$n" "$($W commit --service "$SVC" --bounty 0 --hunter dave --nonce "$n" --salt 0x0d --witness "$(dave_witness)" 2>/dev/null)"
 	expect "dave committed" '^999990$' balance dave
 	mark "anchor, bounty, commitment"
 fi
@@ -218,7 +235,7 @@ fi
 step "dave reveals, trusting the attested empty clause"
 if ! grep -q 'Revealing\|Claimed' <<<"$(bounty)"; then
 	item "$($W reveal --bounty 0 --check "$SAT" --params "$PARAMS" --blobs "$U/batch-0.claim:0" --trust "$U/$(cat "$U/empty")" \
-		--check-gas $GAS --hunter dave --salt 0x0d --witness-str dave --extrinsics "$X")"
+		--check-gas $GAS --hunter dave --salt 0x0d --witness "$(dave_witness)" --extrinsics "$X")"
 fi
 expect "the empty clause refutes the formula" 'Revealing|Claimed' bounty
 if ! grep -q Claimed <<<"$(bounty)"; then
