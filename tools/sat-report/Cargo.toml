@@ -1,0 +1,11 @@
+[package]
+name = "sat-report"
+description = "Host tool for witness-sat: CNF and LRAT in; chunk plans, attest inputs and check arguments out"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+sat-check = { path = "../../check" }
+witness-types = { workspace = true, features = ["std"] }
