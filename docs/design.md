@@ -3,7 +3,7 @@
 Status: both checks, the planner and the demo built and measured; the demo passes in witness-sim
 and on a local PolkaJam v0.1.29 testnet with the full spec's refine gas (493 s). The Erdős
 discrepancy proof is regenerated, attested end to end through witness in witness-sim, and its
-bounty paid; a slice of it on a testnet is next. See [The Erdős discrepancy
+bounty paid; on the testnet, its bounty is posted and its first 10 chunks attested. See [The Erdős discrepancy
 proof](#the-erdős-discrepancy-proof).
 
 ## Summary
@@ -230,6 +230,23 @@ posts a bounty citing it, dave commits, attests every chunk through witness's se
 
 witness-sim ran 166 checks, 5.02×10¹¹ gas in all and at most 3.37×10⁹, at about 0.73×10⁹ gas a
 second of one core, using at most 580 MB of memory. The reveal costs 1.1×10³ gas.
+
+**On a testnet** (`scripts/erdos.sh --testnet`, `SLICE=10`): a local PolkaJam v0.1.29 testnet
+with the full spec's refine gas (`polkajam-full-gas`), on the same laptop, with another job
+benchmarking alongside. Its validators share the laptop's cores, so the proof was planned in 10⁹
+gas chunks (1,280 of them), one to a package, with two slots' settling after each round.
+
+| Stage | Wall time |
+|---|---|
+| plan, at 10⁹ gas a chunk | 170 s |
+| testnet up, witness deployed (the first configuration needed resending, BadCode) | 113 s |
+| anchor, bounty, commitment | 36 s |
+| 10 chunks, in 7 rounds (the first round took 4 small ones) | 168 s, 24 s a round |
+
+The nodes logged each chunk's check at about 10⁹ gas (0.99 to 1.03×10⁹), and no slow refines.
+At 24 s a round, all 1,280 such chunks would take about 8.5 hours on this laptop; the 164 chunks
+of 3×10⁹ that witness-sim ran would take about an hour, if a laptop's guarantors refine them in
+time, which this run didn't test.
 
 **No parallelism.** The chunks form a chain 164 deep: every chunk cites the one before it, as
 CDCL proofs build each learned clause on recent ones. So attesting is 164 rounds of one refine
