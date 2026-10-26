@@ -5,7 +5,7 @@
 
 GAS.tsv is what scripts/gas.sh writes: a line a batch, with the counts the model in
 tools/sat-report/src/plan.rs uses (hints, visits, witness bytes, hashes, trusted bytes) and the gas
-witness-sim measured. Prints the least-squares coefficients, and how far the fitted
+witness-sim measured. Prints the nonnegative least-squares coefficients, and how far the fitted
 model is from each measurement, as the worst under- and overestimate.
 """
 
@@ -22,7 +22,15 @@ for path in sys.argv[1:]:
         rows += [r for r in csv.DictReader(f, delimiter="\t") if int(r["steps"]) > 0]
 X = np.array([[1.0] + [float(r[c]) for c in COLUMNS] for r in rows])
 y = np.array([float(r["gas"]) for r in rows])
-coef = np.linalg.lstsq(X, y, rcond=None)[0]
+# Least squares, nonnegative: refit without any term that came out negative, until none does.
+keep = list(range(X.shape[1]))
+while True:
+    sub = np.linalg.lstsq(X[:, keep], y, rcond=None)[0]
+    if (sub >= 0).all():
+        break
+    keep = [k for k, c in zip(keep, sub) if c >= 0]
+coef = np.zeros(X.shape[1])
+coef[keep] = sub
 fit = X @ coef
 ratio = y / fit
 print(f"{len(rows)} batches")

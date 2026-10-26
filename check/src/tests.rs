@@ -25,8 +25,14 @@ fn formula(vars: u32, clauses: &[&[i32]]) -> Formula_ {
 }
 
 impl Formula_ {
-	/// A chunk using originals `uses` (increasing), after `trusted` trusted clauses.
+	/// A chunk using originals `uses` (increasing), after `trusted` trusted clauses, exporting each
+	/// of `exports` as a bundle of its own.
 	fn chunk(&self, trusted: u32, uses: &[u32], steps: &[(Vec<u32>, Vec<u32>)], exports: &[u32]) -> Vec<u8> {
+		let exports: Vec<Vec<u32>> = exports.iter().map(|&e| vec![e]).collect();
+		self.bundling(trusted, uses, steps, &exports)
+	}
+
+	fn bundling(&self, trusted: u32, uses: &[u32], steps: &[(Vec<u32>, Vec<u32>)], exports: &[Vec<u32>]) -> Vec<u8> {
 		let originals: Vec<(u32, Vec<u32>)> = uses.iter().map(|&i| (i, self.clauses[i as usize].clone())).collect();
 		let proof = tree::prove(&self.levels, uses);
 		ChunkSpec { originals: &originals, proof: &proof, steps, exports }.encode(trusted)
@@ -40,6 +46,11 @@ fn ok(f: impl FnOnce() -> bool + std::panic::UnwindSafe) -> bool {
 	let result = std::panic::catch_unwind(f).unwrap_or(false);
 	std::panic::set_hook(hook);
 	result
+}
+
+/// The bundle of one clause.
+fn one(codes: &[u32]) -> Vec<u8> {
+	bundle([clause_bytes(codes).as_slice()].into_iter())
 }
 
 fn run(mode: CheckMode, trusted: &[&[u8]], plain_or_subjects: &[&[u8]], params: &[u8], witness: &[u8]) -> bool {
@@ -148,9 +159,10 @@ fn a_refutation_in_one_chunk() {
 	// Originals 0..4 are numbered 0..4; the step is 4.
 	let steps = [(vec![], vec![0, 1, 2, 3])];
 	let chunk = fm.chunk(0, &[0, 1, 2, 3], &steps, &[4]);
-	assert!(check_chunk(&fm.f, [].into_iter(), &chunk, &[EMPTY]));
+	assert!(check_chunk(&fm.f, [].into_iter(), &chunk, &[EMPTY_BUNDLE]));
 	assert!(run(CheckMode::Reveal, &[], &[], &p, &chunk), "a reveal can carry the whole proof");
-	assert!(run(CheckMode::Attest, &[], &[EMPTY], &p, &chunk), "or attest it");
+	assert!(run(CheckMode::Attest, &[], &[EMPTY_BUNDLE], &p, &chunk), "or attest it");
+	assert!(!run(CheckMode::Attest, &[], &[EMPTY], &p, &chunk), "a clause isn't a bundle");
 
 	// Hints out of order: x3 isn't unit until x2 is set.
 	let bad = fm.chunk(0, &[0, 1, 2, 3], &[(vec![], vec![0, 2, 1, 3])], &[4]);
@@ -161,7 +173,8 @@ fn a_refutation_in_one_chunk() {
 	// (A hint can't name the step itself or a later one: hints are distances back.) One past the
 	// first clause fails.
 	let mut bad = fm.chunk(0, &[0, 1, 2, 3], &steps, &[4]);
-	let hints_at = bad.len() - 2 - 4;
+	// The chunk ends with the hints, then the exports: 1 bundle of 1 clause, number 4.
+	let hints_at = bad.len() - 3 - 4;
 	assert_eq!(bad[hints_at..hints_at + 4], [3, 2, 1, 0], "the hints, as distances");
 	bad[hints_at] = 4;
 	assert!(!run(CheckMode::Reveal, &[], &[], &p, &bad));
@@ -184,13 +197,13 @@ fn originals_must_be_in_the_formula() {
 	let originals = [(0, cl(&[1])), (1, cl(&[-2]))];
 	let proof = tree::prove(&fm.levels, &[0, 1]);
 	let steps = [(vec![], vec![0, 1])];
-	let forged = ChunkSpec { originals: &originals, proof: &proof, steps: &steps, exports: &[2] }.encode(0);
+	let forged = ChunkSpec { originals: &originals, proof: &proof, steps: &steps, exports: &[vec![2]] }.encode(0);
 	assert!(!run(CheckMode::Reveal, &[], &[], &p, &forged));
 	// Or as original 2 (the indices must match the proof too).
 	let originals = [(0, cl(&[1])), (2, cl(&[-1, 2]))];
 	let proof = tree::prove(&fm.levels, &[0, 1]);
-	let forged = ChunkSpec { originals: &originals, proof: &proof, steps: &[], exports: &[1] }.encode(0);
-	assert!(!run(CheckMode::Attest, &[], &[&clause_bytes(&cl(&[-1, 2]))], &p, &forged));
+	let forged = ChunkSpec { originals: &originals, proof: &proof, steps: &[], exports: &[vec![1]] }.encode(0);
+	assert!(!run(CheckMode::Attest, &[], &[&one(&cl(&[-1, 2]))], &p, &forged));
 }
 
 #[test]
@@ -198,23 +211,23 @@ fn chunks_build_on_attested_clauses() {
 	let fm = chain();
 	let p = fm.f.encode();
 	// Chunk A: from (x1) and (¬x1 ∨ x2), derive (x2); attest it.
-	let x2 = clause_bytes(&cl(&[2]));
+	let x2 = one(&cl(&[2]));
 	let a = fm.chunk(0, &[0, 1], &[(cl(&[2]), vec![0, 1])], &[2]);
 	assert!(run(CheckMode::Attest, &[], &[&x2], &p, &a));
 	// A wrong subject.
-	assert!(!run(CheckMode::Attest, &[], &[&clause_bytes(&cl(&[3]))], &p, &a));
+	assert!(!run(CheckMode::Attest, &[], &[&one(&cl(&[3]))], &p, &a));
 	assert!(!run(CheckMode::Attest, &[], &[], &p, &a), "no subjects");
 	// Chunk B: trusting (x2), with (¬x2 ∨ x3) and (¬x3), derive the empty clause. Trusted is
 	// clause 0, originals 2 and 3 are 1 and 2, the step 3.
 	let b = fm.chunk(1, &[2, 3], &[(vec![], vec![0, 1, 2])], &[3]);
-	assert!(run(CheckMode::Attest, &[&x2], &[EMPTY], &p, &b));
-	assert!(!run(CheckMode::Attest, &[], &[EMPTY], &p, &b), "without the trusted clause");
+	assert!(run(CheckMode::Attest, &[&x2], &[EMPTY_BUNDLE], &p, &b));
+	assert!(!run(CheckMode::Attest, &[], &[EMPTY_BUNDLE], &p, &b), "without the trusted clause");
 	// A reveal trusting the attested empty clause is paid, whatever its witness.
-	assert!(run(CheckMode::Reveal, &[&x2, EMPTY], &[], &p, b"hunter's tag"));
+	assert!(run(CheckMode::Reveal, &[&x2, EMPTY_BUNDLE], &[], &p, b"hunter's tag"));
 	assert!(!run(CheckMode::Reveal, &[&x2], &[], &p, b"hunter's tag"));
-	assert!(!run(CheckMode::Reveal, &[EMPTY], &[], &[SAT], b""), "an UNSAT clause for a SAT bounty");
+	assert!(!run(CheckMode::Reveal, &[EMPTY_BUNDLE], &[], &[SAT], b""), "an UNSAT clause for a SAT bounty");
 	// A malformed trusted blob fails the chunk.
-	assert!(!run(CheckMode::Attest, &[&[1, 2, 3]], &[EMPTY], &p, &b));
+	assert!(!run(CheckMode::Attest, &[&[1, 2, 3]], &[EMPTY_BUNDLE], &p, &b));
 }
 
 #[test]
@@ -222,8 +235,8 @@ fn an_anchor_is_an_original_clause() {
 	let fm = chain();
 	let p = fm.f.encode();
 	let anchor = fm.chunk(0, &[2], &[], &[0]);
-	assert!(run(CheckMode::Attest, &[], &[&clause_bytes(&fm.clauses[2])], &p, &anchor));
-	assert!(!run(CheckMode::Attest, &[], &[&clause_bytes(&fm.clauses[1])], &p, &anchor));
+	assert!(run(CheckMode::Attest, &[], &[&one(&fm.clauses[2])], &p, &anchor));
+	assert!(!run(CheckMode::Attest, &[], &[&one(&fm.clauses[1])], &p, &anchor));
 }
 
 #[test]
@@ -232,11 +245,36 @@ fn tautologies_and_satisfied_hints() {
 	let p = fm.f.encode();
 	// (x1 ∨ ¬x1) needs no hints.
 	let taut = fm.chunk(0, &[0], &[(cl(&[1, -1]), vec![])], &[1]);
-	assert!(run(CheckMode::Attest, &[], &[&clause_bytes(&cl(&[1, -1]))], &p, &taut));
+	assert!(run(CheckMode::Attest, &[], &[&one(&cl(&[1, -1]))], &p, &taut));
 	// Deriving (x2 ∨ x1) citing (x1), satisfied by the assumption ¬(x2 ∨ x1)? No: (x1) is
 	// falsified then, a conflict at once. But citing (¬x1 ∨ x2) when x1 is false satisfies it.
 	let good = fm.chunk(0, &[0], &[(cl(&[1, 2]), vec![0])], &[1]);
-	assert!(run(CheckMode::Attest, &[], &[&clause_bytes(&cl(&[1, 2]))], &p, &good));
+	assert!(run(CheckMode::Attest, &[], &[&one(&cl(&[1, 2]))], &p, &good));
 	let satisfied = fm.chunk(0, &[0, 1], &[(cl(&[-1, 2]), vec![0, 1])], &[2]);
-	assert!(!run(CheckMode::Attest, &[], &[&clause_bytes(&cl(&[-1, 2]))], &p, &satisfied));
+	assert!(!run(CheckMode::Attest, &[], &[&one(&cl(&[-1, 2]))], &p, &satisfied));
+}
+
+#[test]
+fn bundles_hold_several_clauses() {
+	let fm = chain();
+	let p = fm.f.encode();
+	// Chunk A derives (x2), then (x3), and exports both in one bundle, and (x3) alone in another.
+	let steps = [(cl(&[2]), vec![0, 1]), (cl(&[3]), vec![3, 2])];
+	let a = fm.bundling(0, &[0, 1, 2], &steps, &[vec![3, 4], vec![4]]);
+	let x2 = clause_bytes(&cl(&[2]));
+	let x3 = clause_bytes(&cl(&[3]));
+	let both = bundle([x2.as_slice(), x3.as_slice()].into_iter());
+	assert!(run(CheckMode::Attest, &[], &[&both, &one(&cl(&[3]))], &p, &a));
+	let swapped = bundle([x3.as_slice(), x2.as_slice()].into_iter());
+	assert!(!run(CheckMode::Attest, &[], &[&swapped, &one(&cl(&[3]))], &p, &a), "order matters");
+	assert!(!run(CheckMode::Attest, &[], &[&one(&cl(&[2])), &one(&cl(&[3]))], &p, &a), "a bundle short a clause");
+	let mut extra = both.clone();
+	extra.push(0);
+	assert!(!run(CheckMode::Attest, &[], &[&extra, &one(&cl(&[3]))], &p, &a), "trailing bytes");
+	// Chunk B trusts the bundle: its clauses are 0 and 1, then original 3 (¬x3) is 2.
+	let b = fm.chunk(2, &[3], &[(vec![], vec![1, 2])], &[3]);
+	assert!(run(CheckMode::Attest, &[&both], &[EMPTY_BUNDLE], &p, &b));
+	// The empty clause in a bigger bundle pays too.
+	let late = bundle([x2.as_slice(), EMPTY].into_iter());
+	assert!(run(CheckMode::Reveal, &[&late], &[], &p, b""));
 }

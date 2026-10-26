@@ -73,10 +73,12 @@ impl<'a> Chunk<'a> {
 		Some(encoding)
 	}
 
-	/// Number a clause whose encoding is all of `bytes`.
-	pub fn push_whole(&mut self, bytes: &'a [u8]) -> Option<()> {
+	/// Number the clauses of a bundle, all of `bytes`, in order.
+	pub fn push_bundle(&mut self, bytes: &'a [u8]) -> Option<()> {
 		let mut r = Reader::new(bytes);
-		self.push(&mut r)?;
+		for _ in 0..r.u32()? {
+			self.push(&mut r)?;
+		}
 		r.is_empty().then_some(())
 	}
 

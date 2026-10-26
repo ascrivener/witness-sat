@@ -1,7 +1,8 @@
 # Design: SAT certificates on witness
 
-Status: milestone 1 built and measured in witness-sim: both checks, the planner, and the
-demo. The Erdős discrepancy re-check (milestone 3) is in progress; see [The Erdős discrepancy
+Status: both checks, the planner and the demo built and measured in witness-sim. The Erdős
+discrepancy proof is regenerated, planned and every chunk checked in witness-sim; attesting it
+end to end, and on a testnet, are next. See [The Erdős discrepancy
 proof](#the-erdős-discrepancy-proof).
 
 ## Summary
@@ -17,7 +18,8 @@ clause, and a bounty pays out on that.
 | Ramsey, R(5,5) > 42 | a 42-vertex graph, 108 bytes | 6.0×10⁵ |
 | SAT, 400 variables, 1,700 clauses | an assignment, 50 bytes | 2.5×10⁶ |
 | SAT, 10,000 variables, 42,500 clauses | an assignment, 1.25 KB | 7.2×10⁷ |
-| LRAT chunk | ~24k gas a step on pigeonhole and random 3-SAT proofs | up to 5×10⁹ a chunk |
+| LRAT chunk | ~24k gas a step on pigeonhole proofs, ~90k on the Erdős proof | up to 5×10⁹ a chunk |
+| The Erdős discrepancy proof, C = 2 | 5.6M steps in 164 chunks | 5.0×10¹¹ in all |
 | UNSAT reveal, trusting the attested empty clause | anything | 1.1×10³ |
 
 ## The checks
@@ -46,16 +48,23 @@ distance and LEB128 with trailing zero bytes), so one hash; the empty clause is 
 
 ### Chunks
 
-An attestation's subjects are clauses, and an attestation of this check, with params `F`,
-says: *`F` implies each subject*. A chunk, the attest witness, numbers three kinds of clause in
-one space:
+An attestation's subjects are *bundles* of clauses (a count, then the clauses' encodings), and
+an attestation of this check, with params `F`, says: *`F` implies every clause of each
+subject*. A chunk, the attest witness, numbers three kinds of clause in one space:
 
-1. **trusted:** subjects of earlier attestations (the op's trusted blobs), implied by `F`;
+1. **trusted:** the clauses of earlier attestations' subjects (the op's trusted blobs), implied
+   by `F`;
 2. **original:** clauses of `F`, with one Merkle multiproof against the params' root;
 3. **steps:** clauses the chunk derives, each by RUP over hints naming earlier clauses, as
    distances back.
 
-Each subject must equal one of them (the chunk's *exports* say which). The check accepts only if
+Each subject must be the bundle of some of them, in order (the chunk's *exports* say which).
+
+**Why bundles.** Citing a subject costs an op a reference and a Merkle path (about 300 bytes)
+and refine some hashing, and witness caps an op's blobs at 4,096. A chunk of the Erdős proof
+cites hundreds of thousands of earlier clauses: one clause a subject capped its chunks at about
+250 steps and 1% of a refine's gas (20,391 chunks). Bundled, a chunk cites at most 1,419 subjects
+from 160 attestations, and chunks are cut by gas. The check accepts only if
 every step's RUP check succeeds: assume the step's clause false, then each hint must be unit
 (its one open literal becomes true) or falsified (the conflict, after which the step holds). A
 satisfied hint, or one with two open literals, fails the step.
@@ -73,7 +82,7 @@ its proof (hunters commit before they attest), so it cites an *anchor*: an attes
 first clause, a chunk with no steps that just proves the clause is in the tree. Anyone can make
 it from `F` alone.
 
-**Reveal.** The bounty is paid if a trusted blob is the empty clause; the witness is then
+**Reveal.** The bounty is paid if a trusted bundle holds the empty clause; the witness is then
 anything (the hunter's tag). Or the witness is itself a chunk deriving the empty clause, so a
 proof small enough for one check needs no attestations at all.
 
@@ -110,13 +119,26 @@ where the poster is the one paying for the verification, which is the headline's
    segments of binary LRAT, and `trim` reads them newest first, one in memory at a time, into a
    bitset over clause ids. Needed clauses are then numbered densely, so planning's per-clause
    arrays stay small.
-2. **Cut.** Pass 1 takes steps in order into a chunk until its estimated gas, witness bytes or
-   trusted clauses would pass the budget. It marks each clause a later chunk cites.
-3. **Write.** Pass 2 writes each chunk: hints renumbered, the formula's clauses it uses with
-   their multiproof, the trusted clauses (earlier chunks' exports) in order of first use, and as
-   subjects every step a later chunk cites, plus the empty clause. A chunk whose trusted clauses
-   and subjects would pass witness's 4,096 blobs is split in two, recursively (the first half
-   then also exports what the second cites). Every chunk is checked natively as it's written.
+2. **Cut.** Pass 1 takes steps in order into a chunk until it would pass any of the budget's
+   limits, and records, for each clause a later chunk cites, the first chunk to cite it.
+3. **Bundle.** Chunk `j`'s clauses first cited by chunk `k` make one subject, the bundle
+   `(j, k)`. So chunk `k` trusts exactly the clauses it needs from `j`, and a later chunk citing
+   any of them trusts the whole bundle (paying for clauses it doesn't use). The empty clause is a
+   bundle of its own, so a reveal trusts two bytes.
+4. **Write.** Pass 2 writes each chunk: hints renumbered, the formula's clauses it uses with
+   their multiproof, the trusted bundles in order of first use, and its bundles as subjects.
+   Every chunk is checked natively as it's written.
+
+The budget's limits, each from witness or PolkaJam:
+
+| Limit | Default | Why |
+|---|---|---|
+| estimated check gas | 3×10⁹ | refine has 5×10⁹; measured gas is at most 1.26× the model |
+| witness bytes | 8 MiB | |
+| witness and trusted bytes together | 11 MB | a work package carries about 13.8 MB, with the subjects, citations and check; pass 1 underestimates bytes by about 10% |
+| trusted bundles | 3,000 | `MAX_BLOBS`, 4,096, with the subjects |
+| trusted bytes | 8 MiB | `MAX_BLOBS_LEN`, 16 MiB, with the subjects |
+| attestations cited | 1,200 | refine's output lists them, 32 bytes each, in 48 KiB |
 
 Batch 0 is the anchor; trimming guarantees every other batch exports something (its last step
 is cited later, or is the empty clause).
@@ -136,25 +158,28 @@ cycles a pipeline simulation gives it, a load 25 cycles of latency, and **a cond
 Those two changes took the 6,891-step PHP(8,7) chunk from 1.43×10⁸ gas to 1.20×10⁸; the
 LEB128 reader rewrite alone changed nothing.
 
-**The model** (`tools/sat-report/src/plan.rs`), fitted by least squares (`tools/fit_gas.py`) to
-544 chunks of pigeonhole (8 and 10 pigeons) and random 3-SAT proofs, each measured in witness-sim
-(`scripts/gas.sh`), at budgets from 2×10⁷ to 2×10⁹:
+**The model** (`tools/sat-report/src/plan.rs`), fitted by nonnegative least squares
+(`tools/fit_gas.py`) to 703 chunks measured in witness-sim (`scripts/gas.sh`): pigeonhole (8 and
+10 pigeons) and random 3-SAT proofs at budgets from 2×10⁷ to 2×10⁹, and the Erdős proof's 159
+chunks at 3×10⁹:
 
 | Per | Gas |
 |---|---|
-| hint | 386 |
-| literal visited (hinted clauses' and the step's own) | 112 |
-| byte of chunk witness | 47 |
-| hash proving the formula's clauses | 7,600 |
-| byte of trusted clauses | 21 |
+| hint | 99 |
+| literal visited (hinted clauses' and the step's own) | 82 |
+| byte of chunk witness | 155 |
+| hash proving the formula's clauses | 6,900 |
+| byte of trusted bundles | 236 |
 
-Measured gas was within −10% and +22% of the model. The planner budgets chunks at 3×10⁹ of it by
-default, which stays under refine's 5×10⁹ at +22%. On these proofs a step averaged about 24k gas,
-and a megabyte of chunk witness about 4×10⁸: about 12 MB of witness per refine, under a work
-package's 13.8 MB.
+Measured gas was at most 1.26 times the model (it overestimates small pigeonhole chunks, up to
+5×, which only makes them smaller). On the Erdős proof's final plan, measured gas was within −2%
+and +10% of it. A trusted byte costs about as much as a witness byte: the check parses each
+trusted clause into its padded arena, though few are ever hinted.
 
-What dominates is the RUP loop: per hint and per literal visited. A pigeonhole step visits about
-70 literals over 15 hints; a step with long learned clauses visits more.
+What dominates depends on the proof. A pigeonhole step visits about 70 literals over 15 hints.
+An Erdős step has 64 hints and visits 323 literals; its hints are three-byte distances, as a chunk
+numbers a few hundred thousand clauses; and a chunk trusts about 3 MB of bundles, a quarter of
+its gas.
 
 ## The Erdős discrepancy proof
 
@@ -169,5 +194,54 @@ and AIJ 2015).
   Glucose wrote 1.67 GB of DRUP in about 800 s, which drup-trim checked in about 5.5 h. So the
   proof is regenerated here with CaDiCaL 3.0.1's LRAT.
 
-Numbers to follow: CaDiCaL's time and proof size, the trimmed steps, the chunk plan, and gas and
-wall time in witness-sim.
+**The proof.** CaDiCaL 3.0.1 (`--lrat`, binary) proves it in 570 s on one core of the fanless
+8-core MacBook Air this was built on, with 225 MB of memory, writing 1.53 GB of LRAT zstd-compressed (about 3 GB raw,
+10.5M steps). Trimming keeps 5,595,996 steps (53%).
+
+**The plan** (`sat-report split`, `trim`, `plan`: 12 s, 7 s and 57 s):
+
+| | |
+|---|---|
+| chunks | 164, plus the anchor |
+| steps a chunk | median 33,742, at most 50,468 |
+| gas a chunk, measured in witness-sim | median 3.15×10⁹, at most 3.37×10⁹ |
+| gas in all | 5.02×10¹¹ |
+
+Per chunk: [data/edp2-1161-gas.tsv](data/edp2-1161-gas.tsv) (the plan's counts, and the gas measured).
+| witness and trusted bytes a chunk | median 11.1 MB, at most 12.2 MB |
+| witness in all | 1.23 GB |
+| bundles trusted a chunk | median 727, at most 1,419 |
+| attestations cited a chunk | median 82, at most 160 |
+| subjects a chunk | median 22, at most 105 |
+
+Every chunk checks in witness-sim, four at a time on the laptop's cores in 3 minutes (about 4
+seconds a chunk), and the reveal costs 1.1×10³ gas.
+
+**No parallelism.** The chunks form a chain 164 deep: every chunk cites the one before it, as
+CDCL proofs build each learned clause on recent ones. So attesting is 164 rounds of one refine
+each. That's about 9 minutes of refine in witness-sim; on a testnet with the full spec's
+5×10⁹ refine gas, a round takes a few slots, so about 164 × 3 × 6 s ≈ 50 minutes.
+
+### Go or no-go
+
+**Go**, for witness-sim and a full-gas testnet:
+
+- Each chunk fits one refine with a third of its gas to spare and a work package with about
+  1.6 MB to spare. It needs no change to witness.
+- 5×10¹¹ gas is 100 refines' worth: about 9 minutes of one core, or 100 cores' worth of one
+  6-second slot, though the chain makes it 164 slots at least.
+- On PolkaJam's dev chain (10⁹ refine gas), chunks would be about 5× smaller and the chain about
+  800 rounds: it would work, slowly. The full-gas wrapper is the testnet to use.
+
+What it would take in production, and what's open:
+
+- **Latency is the chain.** Cutting it needs chunks that don't wait for their predecessors:
+  attest each chunk *conditionally*, as "these imports imply these exports", all at once, then
+  link them with cheap ops that discharge the imports in order (many chunks a link op, since a
+  link only hashes). Or cube-and-conquer proofs, whose cubes are independent.
+- **Bytes.** 1.23 GB of witness, plus the trusted bundles, travel as work packages. JAM keeps
+  them available for audit, not in state; state holds 165 attestation records.
+- **The model's reach.** It's fitted on three kinds of proof; a proof with much longer clauses,
+  or many more distinct citations, may need a refit (`scripts/gas.sh`, `tools/fit_gas.py`).
+
+The Keller dimension-7 fallback isn't needed: the Erdős proof fits.
