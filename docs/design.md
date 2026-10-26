@@ -1,8 +1,8 @@
 # Design: SAT certificates on witness
 
 Status: both checks, the planner and the demo built and measured in witness-sim. The Erdős
-discrepancy proof is regenerated, planned and every chunk checked in witness-sim; attesting it
-end to end, and on a testnet, are next. See [The Erdős discrepancy
+discrepancy proof is regenerated, attested end to end through witness in witness-sim, and its
+bounty paid; a testnet run is next. See [The Erdős discrepancy
 proof](#the-erdős-discrepancy-proof).
 
 ## Summary
@@ -214,12 +214,24 @@ Per chunk: [data/edp2-1161-gas.tsv](data/edp2-1161-gas.tsv) (the plan's counts, 
 | attestations cited a chunk | median 82, at most 160 |
 | subjects a chunk | median 22, at most 105 |
 
-Every chunk checks in witness-sim, four at a time on the laptop's cores in 3 minutes (about 4
-seconds a chunk), and the reveal costs 1.1×10³ gas.
+**End to end in witness-sim** (`scripts/erdos-sim.sh`): carol attests the formula's anchor and
+posts a bounty citing it, dave commits, attests every chunk through witness's service with
+`attest-batches.py`, reveals trusting the attested empty clause, and is paid.
+
+| Stage | Wall time |
+|---|---|
+| plan (from the trimmed segments) | 60 s |
+| anchor, bounty, commitment | 1 s |
+| attesting 164 chunks, in 163 rounds | 685 s |
+| reveal and payout | under 1 s |
+| in all | 747 s |
+
+witness-sim ran 166 checks, 5.02×10¹¹ gas in all and at most 3.37×10⁹, at about 0.73×10⁹ gas a
+second of one core, using at most 580 MB of memory. The reveal costs 1.1×10³ gas.
 
 **No parallelism.** The chunks form a chain 164 deep: every chunk cites the one before it, as
 CDCL proofs build each learned clause on recent ones. So attesting is 164 rounds of one refine
-each. That's about 9 minutes of refine in witness-sim; on a testnet with the full spec's
+each, and it's why the run above took 11 minutes on one core of an 8-core laptop; on a testnet with the full spec's
 5×10⁹ refine gas, a round takes a few slots, so about 164 × 3 × 6 s ≈ 50 minutes.
 
 ### Go or no-go
