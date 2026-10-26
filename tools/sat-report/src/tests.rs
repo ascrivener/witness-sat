@@ -43,7 +43,7 @@ fn batch(work: &str, n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u8>, Vec<usiz
 
 fn plan(proof: &str, work: &str, gas: u64) -> plan::Summary {
 	let cnf = Cnf::read(CNF).unwrap();
-	plan::plan(&cnf, proof, work, plan::Budget { gas, witness: 8 << 20, trusted: 3000 }, &plan::GAS_MODEL).unwrap()
+	plan::plan(&cnf, proof, work, plan::Budget { gas, witness: 8 << 20, trusted: 3000, trusted_bytes: 8 << 20, claims: 1200, package: 12 << 20 }, &plan::GAS_MODEL).unwrap()
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn plans_check_and_cite_only_earlier_batches() {
 				assert!(!ok, "batch {n}, byte {at} flipped");
 			}
 		}
-		assert_eq!(fs::read(format!("{work}/subjects/{}", s.empty.replace(".claim:", "-").trim_start_matches("batch-"))).unwrap(), sat_check::EMPTY);
+		assert_eq!(fs::read(format!("{work}/subjects/{}", s.empty.replace(".claim:", "-").trim_start_matches("batch-"))).unwrap(), sat_check::EMPTY_BUNDLE);
 	}
 }
 

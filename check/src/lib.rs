@@ -7,14 +7,19 @@
 //! - **UNSAT** (`[1] ++ vars ++ clauses ++ root`, [`Unsat`]): the formula has `vars` variables
 //!   and its `clauses` clauses, in order, have the Merkle root `root` (see [`tree`]). The bounty
 //!   pays for a refutation, an LRAT proof, attested in chunks:
-//!   - **Attest mode**, with these params: the subjects are clauses the formula implies. The
-//!     witness is a chunk of proof steps ([`check_chunk`]), checked by RUP over the trusted
-//!     clauses (subjects of earlier attestations, so implied too), the formula's clauses it proves
-//!     in the tree, and its own earlier steps; each subject must be one of those clauses. So by
-//!     induction every attested subject is implied by the formula.
-//!   - **Reveal mode:** the bounty is paid if a trusted blob is the empty clause: an attestation
-//!     derived it, so the formula is unsatisfiable. Or the witness is a chunk that derives it,
-//!     for a proof small enough to check in one go.
+//!   - **Attest mode**, with these params: each subject is a *bundle* of clauses the formula
+//!     implies ([`bundle`]). The witness is a chunk of proof steps ([`check_chunk`]), checked by
+//!     RUP over the clauses of the trusted bundles (subjects of earlier attestations, so implied
+//!     too), the formula's clauses it proves in the tree, and its own earlier steps; each subject
+//!     must bundle some of those clauses. So by induction every attested clause is implied by the
+//!     formula.
+//!   - **Reveal mode:** the bounty is paid if a trusted bundle holds the empty clause: an
+//!     attestation derived it, so the formula is unsatisfiable. Or the witness is a chunk that
+//!     derives it, for a proof small enough to check in one go.
+//!
+//! A bundle, not a clause, is the subject because citing a subject costs an op a Merkle path and
+//! a reference, and witness caps an op's blobs at 4,096: a chunk of a real proof cites thousands
+//! of earlier clauses, and one path per clause would cap chunks far below a refine's gas.
 //!
 //! witness lets a reveal trust attested subjects only if its bounty cites one, and a bounty fixes
 //! the attest params of everything its reveals trust to those of what it cites. So an UNSAT
@@ -22,8 +27,7 @@
 //! one original clause in the tree. Anyone can attest it from the formula alone, before any proof
 //! exists, so the bounty can be posted first.
 //!
-//! Clauses, as subjects and in chunks, are encoded canonically ([`enc`]), so a clause has one
-//! hash.
+//! Clauses and bundles are encoded canonically ([`enc`]), so each has one hash.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -69,6 +73,19 @@ pub const UNSAT: u8 = 1;
 
 /// The empty clause's encoding.
 pub const EMPTY: &[u8] = &[0];
+
+/// The bundle holding just the empty clause.
+pub const EMPTY_BUNDLE: &[u8] = &[1, 0];
+
+/// A bundle: its clause count (LEB128), then the clauses' encodings.
+pub fn bundle<'a>(clauses: impl ExactSizeIterator<Item = &'a [u8]>) -> Vec<u8> {
+	let mut out = Vec::new();
+	enc::put_u32(&mut out, clauses.len() as u32);
+	for c in clauses {
+		out.extend_from_slice(c);
+	}
+	out
+}
 
 /// An unsatisfiable bounty's formula, as its params commit to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,8 +145,8 @@ pub fn satisfies(formula: &[u8], assignment: &[u8]) -> bool {
 	r.is_empty()
 }
 
-/// Check a chunk: the witness `chunk`, given the formula `f` and the `trusted` clauses (each an
-/// encoding), derives every clause in `subjects`. A chunk is, in LEB128 ([`enc`]):
+/// Check a chunk: the witness `chunk`, given the formula `f` and the `trusted` bundles, derives
+/// every clause of every bundle in `subjects`. A chunk is, in LEB128 ([`enc`]):
 ///
 /// ```text
 /// originals  count, then each one's index in the formula (the first as it is, then each as
@@ -137,22 +154,25 @@ pub fn satisfies(formula: &[u8], assignment: &[u8]) -> bool {
 ///            hash count and hashes (32 bytes each), proving them in the tree
 /// steps      count, then each one's clause, hint count, and hints, each as how far back from
 ///            the step the clause it names is numbered (0 for the one just before it)
-/// exports    count, then each one's number: subject i must be clause exports[i]
+/// exports    count, then for each subject its clauses' count and numbers: the subject must be
+///            the bundle of those clauses, in that order
 /// ```
 ///
-/// Clauses are numbered trusted first, then originals, then steps ([`lrat`]).
+/// Clauses are numbered trusted first (each bundle's in order), then originals, then steps
+/// ([`lrat`]).
 pub fn check_chunk<'a>(f: &Unsat, trusted: impl Iterator<Item = &'a [u8]>, chunk: &'a [u8], subjects: &[&[u8]]) -> bool {
 	chunk_derives(f, trusted, chunk, subjects).is_some()
 }
 
 /// A chunk to encode: hints and exports are clause numbers (trusted, then originals, then steps).
+/// Each export is a subject, the bundle of the clauses it lists.
 pub struct ChunkSpec<'a> {
 	/// The formula's clauses the chunk uses, by index, increasing, with their codes.
 	pub originals: &'a [(u32, Vec<u32>)],
 	pub proof: &'a [tree::Hash],
 	/// Each step's clause codes (increasing) and hints.
 	pub steps: &'a [(Vec<u32>, Vec<u32>)],
-	pub exports: &'a [u32],
+	pub exports: &'a [Vec<u32>],
 }
 
 impl ChunkSpec<'_> {
@@ -183,8 +203,11 @@ impl ChunkSpec<'_> {
 			}
 		}
 		put(&mut out, self.exports.len() as u32);
-		for &e in self.exports {
-			put(&mut out, e);
+		for bundle in self.exports {
+			put(&mut out, bundle.len() as u32);
+			for &e in bundle {
+				put(&mut out, e);
+			}
 		}
 		out
 	}
@@ -193,7 +216,7 @@ impl ChunkSpec<'_> {
 fn chunk_derives<'a>(f: &Unsat, trusted: impl Iterator<Item = &'a [u8]>, chunk: &'a [u8], subjects: &[&[u8]]) -> Option<()> {
 	let mut c = Chunk::new(f.vars)?;
 	for t in trusted {
-		c.push_whole(t)?;
+		c.push_bundle(t)?;
 	}
 	let mut r = Reader::new(chunk);
 
@@ -223,11 +246,28 @@ fn chunk_derives<'a>(f: &Unsat, trusted: impl Iterator<Item = &'a [u8]>, chunk: 
 		return None;
 	}
 	for s in subjects {
-		if c.encoding(r.u32()? as usize)? != *s {
+		let mut subject = Reader::new(s);
+		let count = r.u32()?;
+		if subject.u32()? != count {
+			return None;
+		}
+		for _ in 0..count {
+			let clause = c.encoding(r.u32()? as usize)?;
+			if subject.bytes(clause.len())? != clause {
+				return None;
+			}
+		}
+		if !subject.is_empty() {
 			return None;
 		}
 	}
 	r.is_empty().then_some(())
+}
+
+/// Whether one of the `trusted` bundles holds the empty clause.
+pub fn holds_empty<'a>(f: &Unsat, trusted: impl Iterator<Item = &'a [u8]>) -> bool {
+	let Some(mut c) = Chunk::new(f.vars) else { return false };
+	trusted.into_iter().all(|t| c.push_bundle(t).is_some()) && (0..c.len()).any(|i| c.encoding(i) == Some(EMPTY))
 }
 
 fn check(input: &Input) -> bool {
@@ -246,9 +286,8 @@ fn check(input: &Input) -> bool {
 					let subjects: Vec<&[u8]> = input.subjects().map(|b| b.data).collect();
 					!subjects.is_empty() && check_chunk(&f, trusted, input.witness, &subjects)
 				},
-				Mode::Reveal => {
-					input.trusted().any(|b| b.data == EMPTY) || check_chunk(&f, trusted, input.witness, &[EMPTY])
-				},
+				Mode::Reveal => holds_empty(&f, input.trusted().map(|b| b.data)) ||
+					check_chunk(&f, trusted, input.witness, &[EMPTY_BUNDLE]),
 			}
 		},
 		_ => false,

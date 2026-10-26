@@ -25,7 +25,8 @@ fn usage() -> ! {
   unsat-params IN.cnf                an UNSAT bounty's params (hex), and the formula's size
   split PROOF DIR [--segment BYTES]  a proof (LRAT, plain or .zst) as compressed segments (see proof.rs)
   trim IN.cnf DIR                    mark the steps a split proof's empty clause needs (DIR/needed.bits)
-  plan IN.cnf PROOF WORK [--gas G] [--witness BYTES] [--trusted N]
+  plan IN.cnf PROOF WORK [--gas G] [--witness BYTES] [--trusted BUNDLES] [--trusted-bytes BYTES]
+                                     [--claims N] [--package BYTES]
                                      cut an LRAT refutation into attestable chunks (see plan.rs)
   args WORK BATCH OUT                batch BATCH's attest arguments, for `witness-sim check`
   reveal-args WORK OUT               a reveal trusting WORK's empty clause, for `witness-sim check`
@@ -115,6 +116,9 @@ fn run(args: &[String]) -> io::Result<()> {
 				gas: flag(args, "--gas", 3_000_000_000),
 				witness: flag(args, "--witness", 8 << 20),
 				trusted: flag(args, "--trusted", 3_000),
+				trusted_bytes: flag(args, "--trusted-bytes", 8 << 20),
+				claims: flag(args, "--claims", 1_200),
+				package: flag(args, "--package", 11_000_000),
 			};
 			fs::create_dir_all(a(3))?;
 			let started = Instant::now();

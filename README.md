@@ -23,6 +23,7 @@ ramsey/               ramsey-check, with a (5,5,42)-graph in ramsey/testdata
 tools/sat-report/     host tool: CNF and LRAT in; chunk plans, attest inputs and check args out
 tools/fit_gas.py      fits the planner's gas model to measurements
 scripts/demo.sh       the bounties end to end, in witness-sim or on a PolkaJam testnet
+scripts/erdos.sh      an UNSAT bounty for a big proof (the Erdős one), attested and paid
 scripts/gas.sh        measures each chunk's gas in witness-sim
 ```
 
@@ -54,7 +55,7 @@ several at once where they don't depend on each other.
 
 ```bash
 WITNESS_DIR=../witness scripts/demo.sh             # witness-sim, under a minute
-WITNESS_DIR=../witness POLKAJAM_DIR=... scripts/demo.sh --testnet
+WITNESS_DIR=../witness POLKAJAM_DIR=... scripts/demo.sh --testnet   # about 8 minutes
 ```
 
 Carol posts four bounties: R(5,5) > 42, which alice claims with a known graph (mallory's copy,
