@@ -99,16 +99,19 @@ proof small enough for one check needs no attestations at all.
 ### Front-running
 
 Attestations are public, and an UNSAT reveal accepts any witness once the empty clause is
-attested. witness pays the earliest commitment that reveals, so a hunter who commits before
-attesting their first chunk wins against anyone who sees the chunks and commits later. But
-anyone can commit *speculatively*, before the hunter, at no cost but the commit deposit, then
-reveal once the hunter's empty clause is attested, and be first. The same holds for witness-lean
-whenever a reveal adds little to attested work.
+attested. witness pays the earliest commitment that reveals, so on its own a hunter who commits
+before attesting their first chunk still loses to anyone who committed *speculatively*, before
+them, and reveals once the hunter's empty clause is attested.
 
-Fixing it needs witness: say, a bounty option that pays only a hunter who attested the cited
-empty clause themselves. Attestation records already store the attester, and accumulate can
-check `record.attester == hunter` for one named claim. Until then, UNSAT bounties suit cases
-where the poster is the one paying for the verification, which is the headline's case.
+So an UNSAT bounty binds claims (witness's `create --bind-claim`, ascrivener/witness#25): a reveal
+may trust at most one attestation beyond the bounty's anchor, and its witness must begin with that
+attestation's id. An id covers its parents' ids, so the id of the chunk holding the empty clause
+is fixed by the whole chain beneath it and can't be known before that work exists. The hunter
+builds every chunk's claim off chain (`witness attest` only builds the op), commits to the last
+one's id (`witness claim-id`), then attests: an earlier speculator can't have committed to it,
+and anyone who commits to it after seeing it is later than the hunter. `scripts/demo.sh` shows
+mallory's earlier commitment refused ("the witness doesn't bind the reveal's attestation") and
+dave paid.
 
 ## Planning
 
