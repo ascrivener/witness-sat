@@ -1,0 +1,22 @@
+[package]
+name = "sat-check"
+description = "Witness check for SAT certificates: a satisfying assignment, or an LRAT refutation attested in chunks"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# A check has one entry point at pc 0, which is the authorizer layout.
+[package.metadata.jam]
+type = "authorizer"
+
+[dependencies]
+witness-check = { workspace = true, features = ["alloc"] }
+polkavm-derive.workspace = true
+blake2b_simd = { version = "1.0.5", default-features = false }
+
+[dev-dependencies]
+witness-types = { workspace = true, features = ["std"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_env, values("polkavm"))'] }

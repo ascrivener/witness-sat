@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["check", "ramsey", "tools/sat-report"]
+default-members = ["check", "ramsey", "tools/sat-report"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "Apache-2.0"
+authors = ["Adam Scrivener <adam@oneoff.world>"]
+
+[workspace.dependencies]
+# The check interface and the types it's encoded with, from witness (pinned).
+witness-check = { git = "https://github.com/ascrivener/witness", rev = "8788722a" }
+witness-types = { git = "https://github.com/ascrivener/witness", rev = "8788722a", default-features = false }
+polkavm-derive = { version = "0.37.0", default-features = false }
+
+# `cargo jam-build` builds PVM blobs with this profile.
+[profile.production]
+inherits = "release"
+lto = true
+codegen-units = 1

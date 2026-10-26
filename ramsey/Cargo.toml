@@ -1,0 +1,18 @@
+[package]
+name = "ramsey-check"
+description = "Witness check for Ramsey lower bounds: a graph on n vertices with no s-clique and no independent set of size t, so R(s, t) > n"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# A check has one entry point at pc 0, which is the authorizer layout.
+[package.metadata.jam]
+type = "authorizer"
+
+[dependencies]
+witness-check.workspace = true
+polkavm-derive.workspace = true
+
+[dev-dependencies]
+witness-types = { workspace = true, features = ["std"] }
